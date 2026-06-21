@@ -1,6 +1,6 @@
 from typing import TypedDict,Sequence,Annotated
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage,SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -35,12 +35,31 @@ SERVERS = {
             "run",
             "E:/agentic_workflow/ragsystem.py"
        ]
+    },
+    "google-workspace":{
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+            "run",
+            "fastmcp",
+            "run",
+            "E:/agentic_workflow/custom_doc_and_sheet.py"
+       ]
     }
-    
 }
 
 
 model = ChatGoogleGenerativeAI(api_key = os.getenv("GOOGLE_API_KEY"),model = "gemma-4-31b-it")
+
+#system instruction for excel sheet mcp server
+SYSTEM_INSTRUCTIONS = """
+You are a highly capable Multi-Agent Orchestrator. You have access to tools for RAG retrieval, local file handling, and Google Workspace operations.
+
+CRITICAL RULES FOR GOOGLE WORKSPACE:
+1. When creating a new Google Sheet using `create_sheet`, the system will automatically generate a default tab named "Sheet1".
+2. If you need to immediately write data to a newly created sheet, you MUST use "Sheet1" as the `range_name` parameter for the `write_sheet` tool.
+3. Structure all row data clearly as a list of strings.
+"""
 
 async def build_and_run_graph():
     client = MultiServerMCPClient(SERVERS)
@@ -49,8 +68,10 @@ async def build_and_run_graph():
 
     async def agent_node(state: GraphState):
         """The Brain: It reads the state and invoke the LLM"""
-        message = state['messages']
-        response = await bound_model.ainvoke(message)
+        messages = state['messages']
+        if not messages or getattr(messages[0], "type", "") != "system":
+            messages = [SystemMessage(content=SYSTEM_INSTRUCTIONS)] + list(messages)
+        response = await bound_model.ainvoke(messages)
 
         return {"messages": [response]}
         
@@ -71,7 +92,13 @@ async def build_and_run_graph():
     # input = {"messages":[("user","What files are in my current Directory ?")]}
 
     
-    input = {"messages": [("user", "Query the ragsystem to find the ctc mentioned. Once you have the answer, create a new file in my current directory called 'vault_summary.txt' and write the explanation into that file.")]}
+    # input = {"messages": [("user", "Query the ragsystem to find the ctc mentioned. Once you have the answer, create a new file in my current directory called 'vault_summary.txt' and write the explanation into that file.")]}
+
+    input = {
+    "messages": [
+        ("user", "Query the RAG vault to find the specific CTC mentioned. Once you find it, create a new Google Doc called 'Offer Details', and then append a summary of the CTC information into that new document.")
+    ]
+}
 
     async for event in app.astream(input, stream_mode="values"):
         message = event["messages"][-1]

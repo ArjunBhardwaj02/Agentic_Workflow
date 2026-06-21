@@ -69,6 +69,16 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
         if not p.is_file():
             return f"Error: Cannot find file at {filepath}"
         
+        #if uploading the same file, remove the old vectors
+        try:
+            index.delete(
+                filter={"source":filepath},
+                namespace=namespace
+            )
+            print(f'Cleared old vectors or {filepath}')
+        except Exception:
+            pass
+        
         # 1. Structural Extraction with LlamaParse
         parsing_instruction = "You are an Expert Document Analyzer. Accurately parse the document including all tables and columns into clean markdown."
         
