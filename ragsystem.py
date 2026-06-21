@@ -47,12 +47,14 @@ index = db.Index(index_name)
 
 # 3. Create the Native Hybrid Retriever
 # This correctly accepts the sparse_encoder without throwing a TypeError
-retriever = PineconeHybridSearchRetriever(
-    embeddings=embeddings,
-    sparse_encoder=bm25_encoder,
-    index=index,
-    text_key="text" 
-)
+def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
+    return PineconeHybridSearchRetriever(
+        embeddings=embeddings,
+        sparse_encoder=bm25_encoder,
+        index=index,
+        text_key="text",
+        namespace=namespace
+    )
 
 # MCP TOOLS
 
@@ -108,7 +110,7 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
             metadatas.append(meta)
             
         # 5. Push to Pinecone (Generates both Dense & Sparse vectors)
-        retriever.add_texts(texts, metadatas=metadatas, namespace=namespace)
+        _get_retriever(namespace).add_texts(texts, metadatas=metadatas)
         
         return f"Success: Ingested {len(texts)} chunks into namespace '{namespace}'."
         
@@ -123,11 +125,9 @@ async def query_vault(query: str, namespace: str = "default") -> str:
     Returns the raw text chunks most relevant to the query. 
     """
     try:
-        # Dynamically point the retriever to the requested namespace
-        retriever.namespace = namespace
         
         # Execute Hybrid Search
-        results = await retriever.ainvoke(query)
+        results = await _get_retriever(namespace).ainvoke(query)
         
         if not results:
             return "No relevant information found in the vault."

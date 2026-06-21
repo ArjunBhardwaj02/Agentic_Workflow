@@ -2,12 +2,14 @@ from pathlib import Path
 from fastmcp import FastMCP
 import asyncio
 import aiofile
+import os
 
 
 mcp = FastMCP("File Handling System")
 
 @mcp.tool()
 async def read_file(filepath: str) ->str:
+    """Read a specific file"""
     try:
 
         p = Path(filepath)
@@ -23,6 +25,7 @@ async def read_file(filepath: str) ->str:
 
 @mcp.tool()
 async def write_file(filepath:str, content:str) ->str:
+    """Edit an existing file or create a new file if not exist with the detail user asks. """
     try:
         p = Path(filepath)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -33,5 +36,17 @@ async def write_file(filepath:str, content:str) ->str:
     except Exception as e:
         return f"Error Writing the file: {str(e)}"
     
+@mcp.tool()
+async def list_directory(directory_path: str = '.'):
+    """List all the files present in the directory"""
+    try:
+        p = os.path.abspath(directory_path)
+        if os.path.isdir(p):
+            return '\n'.join(os.listdir(p))
+        else:
+            return f"Error: Provided path is not a directory!"
+    except Exception as e:
+        return f"Error Reading the directory: {str(e)}"
+
 if __name__ == '__main__':
     mcp.run()
