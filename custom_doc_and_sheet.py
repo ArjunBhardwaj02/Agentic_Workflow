@@ -7,8 +7,9 @@ from googleapiclient.discovery import build
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/documents'
+    'https://www.googleapis.com/auth/spreadsheets', #google sheet
+    'https://www.googleapis.com/auth/documents',    #google docs
+    'https://www.googleapis.com/auth/drive.readonly' #google drive -> read only
 ]
 
 mcp = FastMCP("custom google workspace")
@@ -35,12 +36,53 @@ def get_google_services():
 
     sheets_services=build('sheets','v4',credentials=creds)
     docs_services = build("docs",'v1',credentials=creds)
+    drive_services = build("drive",'v3',credentials=creds)
 
-    return sheets_services, docs_services
+    return sheets_services, docs_services,drive_services
 
-sheets_services , docs_services = get_google_services()
+sheets_services , docs_services, drive_services = get_google_services()
 
 # MCP Tools
+#Search the drive for the docs / sheet
+@mcp.tool()
+async def search_drive(file_name:str)->str:
+    """
+    Searches Google Drive for any file by its exact or partial name.
+    Returns the File ID (Document ID or Spreadsheet ID) and its type.
+    
+    Args:
+        file_name: The human-readable name of the file (e.g., 'Resume' or 'Budget').
+    """
+    try:
+        #excluding the trash files
+        query = f"name contains '{file_name}' and trashed=false"
+        result = drive_services.files().list(
+            q = query,
+            pageSize = 5, #retrive only top 5
+            fields = "files(id, name, mimeType)"    #mimeType for llm to differentiate b/w docs and sheet
+        ).execute()
+
+        items = result.get('files',[])
+        if not items:
+            return f'No Google Docs found matching the name "{file_name}"'
+        
+        #format the output
+        output ="Found the following documents: \n"
+        for item in items:
+            if 'document' in item['mimeType']:
+                file_type = "Google Docs"
+            elif 'spreadsheet' in item['mimeType']:
+                file_type = 'Google Sheet'
+            else:
+                file_type = "Other (PDF, Image,etc.)"
+            output += f"Name: {item['name']} | ID: {item['id']} | Type: {file_type}\n"
+
+        return output
+
+    except Exception as e:
+        return f"Error searching Google Drive: {str(e)}"
+
+
 #Sheets MCP Server
 
 @mcp.tool()
@@ -127,25 +169,33 @@ async def write_sheet(spreadsheet_id:str, range_name:str, row_values: list[str])
 
 @mcp.tool()
 async def read_docs(document_id:str)->str:
-    """Read the raw text from google docs"""
+    """Read the raw text from google docs, including tables and complex layouts."""
     try:
         #fetch the json tree
         doc = docs_services.documents().get(documentId = document_id).execute()
 
         #the content is a list of structural elements
         document_content = doc.get('body',{}).get('content',[])
-        full_text = ""
 
-        for d in document_content:
-            if d.get('paragraph'):
-                paragraph_element = d['paragraph'].get('elements',[])
-                #iterate over the list
-                for para_element in paragraph_element:
-                    #check if element is textRun
-                    if 'textRun' in para_element:
-                        #extract the string content
-                        content = para_element['textRun'].get('content','')
-                        full_text+=content
+        def extract_text(obj)->str:
+            extracted = ""
+            
+            if isinstance(obj, dict):
+                # In the Docs API, actual readable text is almost always stored under the key 'content'
+                if 'content' in obj and isinstance(obj['content'], str):
+                    extracted += obj['content']
+                
+                # Continue digging through all other nested dictionaries and lists
+                for k, v in obj.items():
+                    extracted += extract_text(v)
+                    
+            elif isinstance(obj, list):
+                # If we hit a list of elements, dig into each one
+                for item in obj:
+                    extracted += extract_text(item)
+            return extracted
+        
+        full_text = extract_text(doc.get('body', {}))
         
         if not full_text.strip():
             return "Document is empty or could not be parsed."

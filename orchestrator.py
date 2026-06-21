@@ -94,9 +94,15 @@ async def build_and_run_graph():
     
     # input = {"messages": [("user", "Query the ragsystem to find the ctc mentioned. Once you have the answer, create a new file in my current directory called 'vault_summary.txt' and write the explanation into that file.")]}
 
+#     input = {
+#     "messages": [
+#         ("user", "Read the Resume file present on google docs and generate a summary of it and save it in new google docs file called 'summary'.")
+#     ]
+# }
+
     input = {
     "messages": [
-        ("user", "Query the RAG vault to find the specific CTC mentioned. Once you find it, create a new Google Doc called 'Offer Details', and then append a summary of the CTC information into that new document.")
+        ("user", "Read the document with name meenal_resume present in google drive. Generate a summary of its contents, create a new Google Doc called 'Resume Summary', and append the summary into that new document.")
     ]
 }
 
