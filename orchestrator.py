@@ -6,13 +6,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
-import os,asyncio
+import os,asyncio,json
 from dotenv import load_dotenv
 load_dotenv()
 
 class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
-
 
 #Declaring the Servers
 SERVERS = {
@@ -45,6 +44,34 @@ SERVERS = {
             "run",
             "E:/agentic_workflow/custom_doc_and_sheet.py"
        ]
+    },
+    "duckduckgo-search": {
+        "transport": "stdio",
+        "command": "uvx",
+        "args": [
+            "--quiet", # avoid downloading status logs
+            "duckduckgo-mcp-server"
+        ]
+    },
+    "notion": {
+    "transport": "stdio",
+    "command": "npx.cmd",
+    "args": ["-y", "@notionhq/notion-mcp-server"],
+    "env": {
+        "OPENAPI_MCP_HEADERS": json.dumps({
+            "Authorization": f"Bearer {os.getenv('NOTION_API_TOKEN')}",
+            "Notion-Version": "2022-06-28"
+        })
+    }
+},
+    "todoist": {
+        "transport": "stdio",
+        "command": "uv",
+        "args": [
+            "run",
+            "python",
+            "E:/agentic_workflow/todoist.py"
+        ]
     }
 }
 
@@ -100,9 +127,31 @@ async def build_and_run_graph():
 #     ]
 # }
 
+#     input = {
+#     "messages": [
+#         ("user", "Read the document with name meenal_resume present in google drive. Generate a summary of its contents, create a new Google Doc called 'Resume Summary', and append the summary into that new document.")
+#     ]
+# }
+    
+#     input = {
+#     "messages": [
+#         ("user", "1. Use DuckDuckGo Search to find the latest news regarding the 'OpenAI o1 model' release or capabilities.\n"
+#                  "2. Synthesize the search results into a concise summary.\n"
+#                  "3. Create a new file in my current directory called 'o1_research.txt' and write the summary into it.")
+#     ]
+# }
+#     input = {
+#     "messages": [
+#         ("user", "1. Check my calendar for today to see if I am busy this afternoon. 2. I want to spend 2 hours working on my 'Automated AI Exam Grader' project tomorrow starting at 10:00 AM. Create a calendar event for this. 3. Create a draft email to arjunbhardwaj0274@gmail.com with a short summary of my schedule for today, and confirm that tomorrow's project block was successfully scheduled.")
+#     ]
+# }
+
     input = {
     "messages": [
-        ("user", "Read the document with name meenal_resume present in google drive. Generate a summary of its contents, create a new Google Doc called 'Resume Summary', and append the summary into that new document.")
+        ("user", "1. Check my current active tasks in Todoist.\n"
+                 "2. Add a new high-priority task (Priority 4) called 'Master FastMCP and LangGraph' due today.\n"
+                 "3. Check my active tasks again to verify it was added and get its Task ID.\n"
+                 )
     ]
 }
 

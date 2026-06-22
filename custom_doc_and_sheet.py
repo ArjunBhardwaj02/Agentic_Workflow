@@ -4,12 +4,19 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+import base64
+from datetime import datetime
+import pytz
+from email.message import EmailMessage
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets', #google sheet
     'https://www.googleapis.com/auth/documents',    #google docs
-    'https://www.googleapis.com/auth/drive.readonly' #google drive -> read only
+    'https://www.googleapis.com/auth/drive.readonly', #google drive -> read only
+    'https://www.googleapis.com/auth/gmail.readonly',   #gmail read
+    'https://www.googleapis.com/auth/gmail.compose', # gmail draft
+    'https://www.googleapis.com/auth/calendar.events' #calendar
 ]
 
 mcp = FastMCP("custom google workspace")
@@ -37,12 +44,46 @@ def get_google_services():
     sheets_services=build('sheets','v4',credentials=creds)
     docs_services = build("docs",'v1',credentials=creds)
     drive_services = build("drive",'v3',credentials=creds)
+    gmail_services = build('gmail', 'v1', credentials=creds)
+    calendar_services  = build('calendar', 'v3', credentials=creds)
 
-    return sheets_services, docs_services,drive_services
+    return sheets_services, docs_services,drive_services,gmail_services,calendar_services
 
-sheets_services , docs_services, drive_services = get_google_services()
+sheets_services , docs_services, drive_services,gmail_services,calendar_services = get_google_services()
+
+def extract_email_body(payload) -> str:
+    """Recursively parses a Gmail API payload to extract plain text."""
+    body = ""
+    
+    # Base case: if the current part contains data
+    if 'data' in payload.get('body', {}):
+        data = payload['body']['data']
+        # Gmail uses urlsafe base64 encoding
+        body += base64.urlsafe_b64decode(data).decode('utf-8')
+        
+    # Recursive case: if the email has multiple parts (text, html, attachments)
+    if 'parts' in payload:
+        for part in payload['parts']:
+            # We only want to extract the plain text, ignore html and attachments for the LLM
+            if part.get('mimeType') == 'text/plain':
+                body += extract_email_body(part)
+            elif 'parts' in part:
+                # Dig deeper into nested parts
+                body += extract_email_body(part)
+                
+    return body
 
 # MCP Tools
+#Get date-time
+@mcp.tool()
+async def get_current_time()->str:
+    """Returns the exact current date and time in IST (Asia/Kolkata).
+    Always use this tool first if you need to calculate 'today', 'tomorrow', or schedule events."""
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    return f"Current Date/Time (IST): {now.strftime('%Y-%m-%d %H:%M:%S')}\nISO 8601: {now.isoformat()}"
+
+
 #Search the drive for the docs / sheet
 @mcp.tool()
 async def search_drive(file_name:str)->str:
@@ -174,9 +215,6 @@ async def read_docs(document_id:str)->str:
         #fetch the json tree
         doc = docs_services.documents().get(documentId = document_id).execute()
 
-        #the content is a list of structural elements
-        document_content = doc.get('body',{}).get('content',[])
-
         def extract_text(obj)->str:
             extracted = ""
             
@@ -280,3 +318,172 @@ async def create_doc(title:str)->str:
     
     except Exception as e:
         return f'Error Creating the document : {str(e)}'
+    
+#for gmail
+@mcp.tool()
+async def create_email_draft(to_email:str,body_text:str,subject:str="")->str:
+    """
+    Creates an email draft in the user's Gmail account WITHOUT sending it.
+    Always use this instead of send_email unless the user explicitly bypasses safety.
+    """
+    try:
+        message = EmailMessage()
+        message.set_content(body_text)
+        message['To'] = to_email
+        message['Subject'] = subject
+
+        encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        #draft the mail
+        draft_payload = {"message":{"raw":encoded_message}}
+        draft = gmail_services.users().drafts().create(
+            userId = "me",
+            body = draft_payload
+        ).execute()
+
+        return f"Success: Draft safely created in your Gmail account. Draft ID: {draft['id']}"
+    except Exception as e:
+        return f"Error creating draft: {str(e)}"
+    
+@mcp.tool()
+async def send_email(to_email:str,body_text:str , subject: str = "")->str:
+    """Sends and email using the user 's Gmail account"""
+    try:
+        message = EmailMessage()
+        message.set_content(body_text)
+        message['To'] = to_email
+        message['Subject'] = subject
+
+        #encode message for google api
+        encoded_msg = base64.urlsafe_b64encode(message.as_bytes()).decode()
+        create_message = {"raw" : encoded_msg}
+
+        send_message = gmail_services.users().messages().send(
+            userId = "me",
+            body = create_message
+        ).execute()
+        return f"Success: Email sent to {to_email}. Message ID: {send_message['id']}"
+    except Exception as e:
+        return f"Error sending email: {str(e)}"
+
+@mcp.tool()
+async def search_email(query: str = "is:unread", max_results: int = 5)->str:
+    """
+    Searches the user's Gmail inbox. 
+    Use standard Gmail search queries (e.g., 'from:john', 'subject:invoice', 'is:unread').
+    Returns a summary of emails including their Message IDs.
+    """
+    try:
+        results = gmail_services.users().messages().list(
+            userId ='me',
+            q = query,
+            maxResults = max_results
+        ).execute()
+        messages = results.get('messages',[])
+        if not messages:
+            return f"No email found matching query: '{query}'"
+        output = f"Found {len(messages)} emails:\n\n"
+
+        for msg in messages:
+            #fetch the metadata
+            msg_data = gmail_services.users().messages().get(
+                userId = 'me',
+                id = msg['id'],
+                format = 'metadata',
+                metadataHeaders = ['Subject','From','Date']
+            ).execute()
+
+            headers = msg_data['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] =='Subject'), "No Subject")
+            sender = next((h['value'] for h in headers if h['name'] == 'From'),'Unknown')
+            output += f'- IDL {msg['id']}\n From: {sender}\n Subject: {subject}\n Snippet: {msg_data.get('snippet','')}\n\n'
+        
+        return output
+    except Exception as e:
+        return f"Error Searching Email: {str(e)}"
+    
+@mcp.tool()
+async def read_email(message_id: str) -> str:
+    """
+    Reads the full, raw plain-text body of a specific email using its Message ID.
+    """
+    try:
+        # We request the 'full' format to get the actual email body
+        msg_data = gmail_services.users().messages().get(
+            userId='me', id=message_id, format='full'
+        ).execute()
+        
+        headers = msg_data['payload']['headers']
+        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
+        sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown')
+        date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown')
+        
+        body_text = extract_email_body(msg_data['payload'])
+        
+        if not body_text.strip():
+            body_text = "[No plain text body found. Email might be pure HTML or images.]"
+            
+        return f"Date: {date}\nFrom: {sender}\nSubject: {subject}\n\nBody:\n{body_text}"
+        
+    except Exception as e:
+        return f"Error reading email: {str(e)}"
+    
+#Calendar
+@mcp.tool()
+async def create_calendar_event(summary: str, start_time: str, end_time: str, description: str = "") -> str:
+    """
+    Creates a new event in the user's primary Google Calendar.
+    CRITICAL: start_time and end_time MUST be strictly in ISO 8601 format with the +05:30 timezone offset.
+    Example: '2026-06-23T10:00:00+05:30'
+    """
+    try:
+        event = {
+            'summary': summary,
+            'description': description,
+            'start': {
+                'dateTime': start_time,
+                'timeZone': 'Asia/Kolkata', 
+            },
+            'end': {
+                'dateTime': end_time,
+                'timeZone': 'Asia/Kolkata',
+            },
+        }
+        
+        created_event = calendar_services.events().insert(
+            calendarId='primary', 
+            body=event
+        ).execute()
+        
+        return f"Success: Event '{summary}' created. Link: {created_event.get('htmlLink')}"
+    except Exception as e:
+        return f"Error creating event: {str(e)}"
+
+async def get_todays_events() -> str:
+    """
+    Fetches the user's upcoming events from their Google Calendar.
+    Returns the start time, end time, and summary of the next 10 events.
+    """
+    try:
+        # Get current time in UTC (required by Google API)
+        now = datetime.datetime.utcnow().isoformat() + 'Z'
+        
+        events_result = calendar_services.events().list(
+            calendarId='primary', timeMin=now,
+            maxResults=10, singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        
+        events = events_result.get('items', [])
+
+        if not events:
+            return 'No upcoming events found.'
+
+        output = "Upcoming Events:\n"
+        for event in events:
+            start = event['start'].get('dateTime', event['start'].get('date'))
+            output += f"- {start}: {event['summary']}\n"
+            
+        return output
+    except Exception as e:
+        return f"Error fetching calendar events: {str(e)}"

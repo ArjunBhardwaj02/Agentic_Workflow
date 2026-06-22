@@ -17,3 +17,26 @@ An enterprise-grade, autonomous AI orchestration system built with LangGraph, ut
 * Bypassed limited community MCP packages to build a raw Python MCP server interacting directly with Google Docs and Sheets REST APIs.
 * **Capabilities:** * `create_sheet` & `write_sheet`: Matrix-based (2D array) row appending using Google's `USER_ENTERED` parsing.
   * `create_doc` & `append_doc`: Dynamic EOF index calculation to securely inject text into heavily nested Google Docs JSON trees.
+
+### 4. Cross-Platform Integrations
+This orchestrator successfully routes complex workflows across multiple isolated domains in a single conversational turn:
+* **Local Filesystem:** Read/Write access via standard I/O transport.
+* **Notion:** Document retrieval via official `@modelcontextprotocol/server-notion`.
+* **DuckDuckGo:** Zero-auth web search via `duckduckgo-mcp-server`.
+* **Todoist:** Task management and creation via a custom FastMCP REST API server.
+
+---
+
+## Prerequisites & Installation
+
+### 1. Environment Setup
+This project uses `uv` for lightning-fast package management. Ensure Python 3.12+ and `uv` are installed.
+
+```bash
+# Clone the repository
+git clone [https://github.com/yourusername/multi-agent-orchestrator.git](https://github.com/yourusername/multi-agent-orchestrator.git)
+cd multi-agent-orchestrator
+
+# Install dependencies via uv
+uv venv
+uv pip install -r requirements.txt
