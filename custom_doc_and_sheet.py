@@ -459,6 +459,7 @@ async def create_calendar_event(summary: str, start_time: str, end_time: str, de
     except Exception as e:
         return f"Error creating event: {str(e)}"
 
+@mcp.tool()
 async def get_todays_events() -> str:
     """
     Fetches the user's upcoming events from their Google Calendar.
@@ -466,7 +467,7 @@ async def get_todays_events() -> str:
     """
     try:
         # Get current time in UTC (required by Google API)
-        now = datetime.datetime.utcnow().isoformat() + 'Z'
+        now = datetime.utcnow().isoformat() + 'Z'
         
         events_result = calendar_services.events().list(
             calendarId='primary', timeMin=now,

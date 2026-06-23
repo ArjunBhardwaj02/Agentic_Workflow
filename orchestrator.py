@@ -88,7 +88,7 @@ CRITICAL RULES FOR GOOGLE WORKSPACE:
 3. Structure all row data clearly as a list of strings.
 """
 
-async def build_and_run_graph():
+async def build_graph():
     client = MultiServerMCPClient(SERVERS)
     tool = await client.get_tools()
     bound_model = model.bind_tools(tool)
@@ -116,48 +116,17 @@ async def build_and_run_graph():
     app = workflow.compile()
 
     print("Graph Compiled")
-    # input = {"messages":[("user","What files are in my current Directory ?")]}
-
     
-    # input = {"messages": [("user", "Query the ragsystem to find the ctc mentioned. Once you have the answer, create a new file in my current directory called 'vault_summary.txt' and write the explanation into that file.")]}
+    app = workflow.compile()
+    return app
 
-#     input = {
-#     "messages": [
-#         ("user", "Read the Resume file present on google docs and generate a summary of it and save it in new google docs file called 'summary'.")
-#     ]
-# }
+async def run_terminal(query:str):
+    app =await build_graph()
+    input = {"messages":[("user",f"{query}")]}
 
-#     input = {
-#     "messages": [
-#         ("user", "Read the document with name meenal_resume present in google drive. Generate a summary of its contents, create a new Google Doc called 'Resume Summary', and append the summary into that new document.")
-#     ]
-# }
-    
-#     input = {
-#     "messages": [
-#         ("user", "1. Use DuckDuckGo Search to find the latest news regarding the 'OpenAI o1 model' release or capabilities.\n"
-#                  "2. Synthesize the search results into a concise summary.\n"
-#                  "3. Create a new file in my current directory called 'o1_research.txt' and write the summary into it.")
-#     ]
-# }
-#     input = {
-#     "messages": [
-#         ("user", "1. Check my calendar for today to see if I am busy this afternoon. 2. I want to spend 2 hours working on my 'Automated AI Exam Grader' project tomorrow starting at 10:00 AM. Create a calendar event for this. 3. Create a draft email to arjunbhardwaj0274@gmail.com with a short summary of my schedule for today, and confirm that tomorrow's project block was successfully scheduled.")
-#     ]
-# }
-
-    input = {
-    "messages": [
-        ("user", "1. Check my current active tasks in Todoist.\n"
-                 "2. Add a new high-priority task (Priority 4) called 'Master FastMCP and LangGraph' due today.\n"
-                 "3. Check my active tasks again to verify it was added and get its Task ID.\n"
-                 )
-    ]
-}
-
-    async for event in app.astream(input, stream_mode="values"):
-        message = event["messages"][-1]
+    async for event in app.astream(input=input, stream_mode="values"):
+        message = event['messages'][-1]
         message.pretty_print()
 
 if __name__ =='__main__':
-    asyncio.run(build_and_run_graph())
+    asyncio.run(run_terminal("Check my current active tasks in Todoist"))

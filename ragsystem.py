@@ -87,7 +87,9 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
             verbose=True,
             # Ensure your .env file has this exact variable name:
             api_key=os.getenv("llama-parse"), 
-            parsing_instruction=parsing_instruction
+            parsing_instruction=parsing_instruction,
+            use_vendor_multimodal_model=True, # This turns on the Vision "eyes"
+            vendor_multimodal_model_name="gemma-4-31b-it", # Or whichever is configured
         )
         
         # aload_data handles the async extraction

@@ -32,24 +32,41 @@ async def get_active_tasks() -> str:
     """
     Fetches the user's current active tasks from Todoist.
     Returns the Task ID, Content, and Due Date. 
-    You MUST use the Task ID to complete a task.
     """
     try:
-        tasks = api.get_tasks()
-        if not tasks:
-            return "No active tasks found."
+        raw_response = api.get_tasks()
         
-        output = "Active Tasks:\n"
-        for task in tasks:
-            if task.due:
-                due = task.due.string if task.due else "No due date"
-                # Crucial update: We must expose the task.id to the LLM
-                output += f"- [ID: {task.id}] {task.content} (Due: {due})\n"
-            else:
-                print(f'Task: {task.content} has no due date')
+        # The Flattener: Unpack the paginator pages into a single list
+        tasks = []
+        if raw_response:
+            for item in raw_response:
+                # If the item is a page (a list of tasks), extend our main list
+                if isinstance(item, list):
+                    tasks.extend(item)
+                # If the item is just a raw task, append it
+                else:
+                    tasks.append(item)
+                    
+        if not tasks:
+            return "No active tasks found in the database."
+            
+        output = f"Active Tasks ({len(tasks)} found):\n"
+        
+        for index, task in enumerate(tasks):
+            try:
+                due = task.due.string if getattr(task, 'due', None) else "No due date"
+                content = getattr(task, 'content', 'Unknown Content')
+                task_id = getattr(task, 'id', 'Unknown ID')
+                priority = getattr(task, 'priority', 'Unknown')
+                
+                output += f"{index + 1}. [ID: {task_id}] {content} (Due: {due}, Priority: {priority})\n"
+            except Exception as loop_error:
+                output += f"- Error reading task at index {index}: {str(loop_error)}\n"
+                
         return output
+        
     except Exception as e:
-        return f"Error fetching tasks: {str(e)}"
+        return f"Error connecting to Todoist: {str(e)}"
 
 @mcp.tool()
 async def complete_task(task_id: str) -> str:
