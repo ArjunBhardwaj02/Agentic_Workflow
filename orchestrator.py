@@ -2,7 +2,7 @@ from typing import TypedDict,Sequence,Annotated
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage,SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -22,7 +22,7 @@ SERVERS = {
             "run",
             "fastmcp",
             "run",
-            "E:/agentic_workflow/filesystem.py"
+            "./filesystem.py"
        ]
     },
     "ragsystem":{
@@ -32,7 +32,7 @@ SERVERS = {
             "run",
             "fastmcp",
             "run",
-            "E:/agentic_workflow/ragsystem.py"
+            "./ragsystem.py"
        ]
     },
     "google-workspace":{
@@ -42,7 +42,7 @@ SERVERS = {
             "run",
             "fastmcp",
             "run",
-            "E:/agentic_workflow/custom_doc_and_sheet.py"
+            "./custom_doc_and_sheet.py"
        ]
     },
     "duckduckgo-search": {
@@ -70,7 +70,7 @@ SERVERS = {
         "args": [
             "run",
             "python",
-            "E:/agentic_workflow/todoist.py"
+            "./todoist.py"
         ]
     }
 }
@@ -88,7 +88,7 @@ CRITICAL RULES FOR GOOGLE WORKSPACE:
 3. Structure all row data clearly as a list of strings.
 """
 
-async def build_graph():
+async def build_graph(checkpointer: BaseCheckpointSaver = None):
     client = MultiServerMCPClient(SERVERS)
     tool = await client.get_tools()
     bound_model = model.bind_tools(tool)
@@ -117,7 +117,7 @@ async def build_graph():
 
     print("Graph Compiled")
     
-    app = workflow.compile()
+    app = workflow.compile(checkpointer=checkpointer)
     return app
 
 async def run_terminal(query:str):
