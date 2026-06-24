@@ -6,7 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 mcp = FastMCP("todoist-server")
-api = TodoistAPI(os.getenv("TODOIST_API_TOKEN"))
+
+def get_todoist_api():
+    """Builds the API client strictly at Run Time."""
+    token = os.getenv("TODOIST_API_TOKEN")
+    if not token:
+        raise ValueError("Todoist API Token is missing. Please provide it in the UI sidebar.")
+    return TodoistAPI(token)
 
 @mcp.tool()
 async def add_task(content: str, due_string: str = "today", priority: int = 1) -> str:
@@ -18,6 +24,7 @@ async def add_task(content: str, due_string: str = "today", priority: int = 1) -
         priority: 1 (Normal), 2 (Medium), 3 (High), 4 (Urgent).
     """
     try:
+        api = get_todoist_api()
         task = api.add_task(
             content=content,
             due_string=due_string,
@@ -34,6 +41,7 @@ async def get_active_tasks() -> str:
     Returns the Task ID, Content, and Due Date. 
     """
     try:
+        api = get_todoist_api()
         raw_response = api.get_tasks()
         
         # The Flattener: Unpack the paginator pages into a single list
@@ -75,6 +83,7 @@ async def complete_task(task_id: str) -> str:
     You MUST pass the exact Task ID (retrieved from get_active_tasks).
     """
     try:
+        api = get_todoist_api()
         # The Todoist API uses close_task to mark it as done
         is_success = api.close_task(task_id=task_id)
         if is_success:

@@ -13,8 +13,20 @@ load_dotenv()
 class GraphState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
-#Declaring the Servers
-SERVERS = {
+
+#system instruction for excel sheet mcp server
+SYSTEM_INSTRUCTIONS = """
+You are a highly capable Multi-Agent Orchestrator. You have access to tools for RAG retrieval, local file handling, and Google Workspace operations.
+
+CRITICAL RULES FOR GOOGLE WORKSPACE:
+1. When creating a new Google Sheet using `create_sheet`, the system will automatically generate a default tab named "Sheet1".
+2. If you need to immediately write data to a newly created sheet, you MUST use "Sheet1" as the `range_name` parameter for the `write_sheet` tool.
+3. Structure all row data clearly as a list of strings.
+"""
+
+async def build_graph(checkpointer: BaseCheckpointSaver = None):
+    #Declaring the Servers
+    SERVERS = {
     "filesystem":{
         "transport": "stdio",
         "command": "uv",
@@ -55,7 +67,8 @@ SERVERS = {
     },
     "notion": {
     "transport": "stdio",
-    "command": "npx.cmd",
+    # "command": "npx.cmd", #for windows
+    "command" : "npx", #for linux
     "args": ["-y", "@notionhq/notion-mcp-server"],
     "env": {
         "OPENAPI_MCP_HEADERS": json.dumps({
@@ -76,19 +89,9 @@ SERVERS = {
 }
 
 
-model = ChatGoogleGenerativeAI(api_key = os.getenv("GOOGLE_API_KEY"),model = "gemma-4-31b-it")
 
-#system instruction for excel sheet mcp server
-SYSTEM_INSTRUCTIONS = """
-You are a highly capable Multi-Agent Orchestrator. You have access to tools for RAG retrieval, local file handling, and Google Workspace operations.
 
-CRITICAL RULES FOR GOOGLE WORKSPACE:
-1. When creating a new Google Sheet using `create_sheet`, the system will automatically generate a default tab named "Sheet1".
-2. If you need to immediately write data to a newly created sheet, you MUST use "Sheet1" as the `range_name` parameter for the `write_sheet` tool.
-3. Structure all row data clearly as a list of strings.
-"""
-
-async def build_graph(checkpointer: BaseCheckpointSaver = None):
+    model = ChatGoogleGenerativeAI(api_key = os.getenv("GOOGLE_API_KEY"),model = "gemma-4-31b-it")
     client = MultiServerMCPClient(SERVERS)
     tool = await client.get_tools()
     bound_model = model.bind_tools(tool)

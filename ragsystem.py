@@ -32,22 +32,31 @@ embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-
 bm25_encoder = BM25Encoder().default()
 
 # 2. Initialize Pinecone Client
-db = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-index_name = "agent-workflow-rag" 
+index_name = "agent-workflow-rag"
 
-if not db.has_index(index_name):
-    db.create_index(
-        name=index_name,
-        spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-        dimension=384,
-        metric="dotproduct" 
-    )
-
-index = db.Index(index_name)
+def get_pinecone_index():
+    """Builds the Pinecone client and connects to the index strictly at Run Time."""
+    api_key = os.getenv("PINECONE_API_KEY")
+    if not api_key:
+        raise ValueError("Pinecone API Key is missing. Please provide it in the UI sidebar.")
+    
+    db = Pinecone(api_key=api_key)
+    
+    # Check and create the index safely at runtime
+    if not db.has_index(index_name):
+        print(f"Creating Pinecone index '{index_name}'...")
+        db.create_index(
+            name=index_name,
+            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            dimension=384,
+            metric="dotproduct" 
+        )
+    return db.Index(index_name)
 
 # 3. Create the Native Hybrid Retriever
 # This correctly accepts the sparse_encoder without throwing a TypeError
 def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
+    index = get_pinecone_index()
     return PineconeHybridSearchRetriever(
         embeddings=embeddings,
         sparse_encoder=bm25_encoder,
@@ -68,6 +77,8 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
         p = Path(filepath)
         if not p.is_file():
             return f"Error: Cannot find file at {filepath}"
+        
+        index = get_pinecone_index()
         
         #if uploading the same file, remove the old vectors
         try:

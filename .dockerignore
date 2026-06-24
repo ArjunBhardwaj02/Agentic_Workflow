@@ -1,0 +1,12 @@
+# Environments & Cache
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local Data & Secrets
+staging_vault/
+.env
+.streamlit/secrets.toml
+credentials.json
+token.json
