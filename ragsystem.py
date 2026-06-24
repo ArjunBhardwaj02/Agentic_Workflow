@@ -1,4 +1,4 @@
-import os
+import os,sys
 import nltk
 from pathlib import Path
 from dotenv import load_dotenv
@@ -28,8 +28,25 @@ except Exception:
 mcp = FastMCP("Semantic RAG Vault")
 
 # 1. Initialize Dual Encoders (Semantic & Keyword)
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-bm25_encoder = BM25Encoder().default()
+# 1. Global Holders (Start empty)
+_embeddings = None
+_bm25_encoder = None
+
+def get_embeddings():
+    """Loads the ML model ONLY on the first execution and caches it."""
+    global _embeddings
+    if _embeddings is None:
+        print("Booting HuggingFace Embeddings into memory for the first time...")
+        _embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    return _embeddings
+
+def get_bm25_encoder():
+    """Loads the sparse encoder ONLY on the first execution and caches it."""
+    global _bm25_encoder
+    if _bm25_encoder is None:
+        print("Booting BM25 Encoder into memory for the first time...")
+        _bm25_encoder = BM25Encoder().default()
+    return _bm25_encoder
 
 # 2. Initialize Pinecone Client
 index_name = "agent-workflow-rag"
@@ -58,8 +75,8 @@ def get_pinecone_index():
 def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
     index = get_pinecone_index()
     return PineconeHybridSearchRetriever(
-        embeddings=embeddings,
-        sparse_encoder=bm25_encoder,
+        embeddings=get_embeddings(),
+        sparse_encoder=get_bm25_encoder(),
         index=index,
         text_key="text",
         namespace=namespace
@@ -82,13 +99,10 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
         
         #if uploading the same file, remove the old vectors
         try:
-            index.delete(
-                filter={"source":filepath},
-                namespace=namespace
-            )
-            print(f'Cleared old vectors or {filepath}')
-        except Exception:
-            pass
+            print(f"🧹 Purging old vectors from namespace '{namespace}'...", file=sys.stderr)
+            index.delete(delete_all=True, namespace=namespace)
+        except Exception as e:
+            print(f"Warning: Could not clear namespace (it might be empty already). {e}", file=sys.stderr)
         
         # 1. Structural Extraction with LlamaParse
         parsing_instruction = "You are an Expert Document Analyzer. Accurately parse the document including all tables and columns into clean markdown."
@@ -97,10 +111,8 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
             result_type="markdown",
             verbose=True,
             # Ensure your .env file has this exact variable name:
-            api_key=os.getenv("llama-parse"), 
-            parsing_instruction=parsing_instruction,
-            use_vendor_multimodal_model=True, # This turns on the Vision "eyes"
-            vendor_multimodal_model_name="gemma-4-31b-it", # Or whichever is configured
+            api_key=os.getenv("LLAMA_CLOUD_API_KEY"), 
+            system_prompt=parsing_instruction
         )
         
         # aload_data handles the async extraction
@@ -144,13 +156,18 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
 @mcp.tool()
 async def query_vault(query: str, namespace: str = "default") -> str:
     """
-    Searches the Semantic Vault vector database for information to answer a user's question.
-    Returns the raw text chunks most relevant to the query. 
+    Searches the Semantic Vault vector database for information.
+    
+    CRITICAL USAGE RULES FOR THE AI:
+    1. DO NOT pass full conversational sentences into this query. 
+    2. You MUST extract and optimize the core keywords before searching. 
+    3. Example: If the user asks "what should I do in July based on the uploaded file?", your query parameter MUST be exactly "July tasks schedule goals".
+    4. Strip all filler words like "uploaded", "file", "document", "what", "according to".
     """
     try:
         
         # Execute Hybrid Search
-        results = await _get_retriever(namespace).ainvoke(query)
+        results =  _get_retriever(namespace).invoke(query)
         
         if not results:
             return "No relevant information found in the vault."
