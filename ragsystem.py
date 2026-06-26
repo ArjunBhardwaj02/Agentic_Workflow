@@ -3,6 +3,8 @@ import nltk
 from pathlib import Path
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+import asyncio
+import traceback
 
 # Core AI & DB Imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
@@ -12,15 +14,16 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from llama_parse import LlamaParse
 from pinecone_text.sparse import BM25Encoder
 
-load_dotenv()
+# load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
 
 # Safely ensure BM25 has its English dictionary
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords', quiet=True)
-except Exception:
-    pass
+# try:
+#     nltk.data.find('corpora/stopwords')
+# except LookupError:
+#     nltk.download('stopwords', quiet=True)
+# except Exception:
+#     pass
 
 # ==========================================
 # GLOBAL INITIALIZATION 
@@ -31,12 +34,13 @@ mcp = FastMCP("Semantic RAG Vault")
 # 1. Global Holders (Start empty)
 _embeddings = None
 _bm25_encoder = None
+namespace = "__default__"
 
 def get_embeddings():
     """Loads the ML model ONLY on the first execution and caches it."""
     global _embeddings
     if _embeddings is None:
-        print("Booting HuggingFace Embeddings into memory for the first time...")
+        print("Booting HuggingFace Embeddings into memory for the first time...",file=sys.stderr)
         _embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return _embeddings
 
@@ -44,7 +48,7 @@ def get_bm25_encoder():
     """Loads the sparse encoder ONLY on the first execution and caches it."""
     global _bm25_encoder
     if _bm25_encoder is None:
-        print("Booting BM25 Encoder into memory for the first time...")
+        print("Booting BM25 Encoder into memory for the first time...",file=sys.stderr)
         _bm25_encoder = BM25Encoder().default()
     return _bm25_encoder
 
@@ -85,7 +89,8 @@ def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
 # MCP TOOLS
 
 @mcp.tool()
-async def ingest_document(filepath: str, namespace: str = "default") -> str:
+# async def ingest_document(filepath: str, namespace: str = "default") -> str:
+async def ingest_document(filepath: str) -> str:
     """
     Reads a local PDF or text file, extracts structured markdown, chunks it, 
     and saves it to the Semantic Vault vector database using Hybrid embeddings.
@@ -109,7 +114,7 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
         
         parser = LlamaParse(
             result_type="markdown",
-            verbose=True,
+            verbose=True, 
             # Ensure your .env file has this exact variable name:
             api_key=os.getenv("LLAMA_CLOUD_API_KEY"), 
             system_prompt=parsing_instruction
@@ -145,7 +150,7 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
             metadatas.append(meta)
             
         # 5. Push to Pinecone (Generates both Dense & Sparse vectors)
-        _get_retriever(namespace).add_texts(texts, metadatas=metadatas)
+        await asyncio.to_thread(_get_retriever(namespace).add_texts, texts, metadatas=metadatas)
         
         return f"Success: Ingested {len(texts)} chunks into namespace '{namespace}'."
         
@@ -154,20 +159,21 @@ async def ingest_document(filepath: str, namespace: str = "default") -> str:
 
 
 @mcp.tool()
-async def query_vault(query: str, namespace: str = "default") -> str:
+# async def query_vault(query: str, namespace: str = "default") -> str:
+async def query_vault(query: str) -> str:
     """
     Searches the Semantic Vault vector database for information.
     
-    CRITICAL USAGE RULES FOR THE AI:
-    1. DO NOT pass full conversational sentences into this query. 
-    2. You MUST extract and optimize the core keywords before searching. 
-    3. Example: If the user asks "what should I do in July based on the uploaded file?", your query parameter MUST be exactly "July tasks schedule goals".
-    4. Strip all filler words like "uploaded", "file", "document", "what", "according to".
     """
+    # CRITICAL USAGE RULES FOR THE AI:
+    # 1. DO NOT pass full conversational sentences into this query. 
+    # 2. You MUST extract and optimize the core keywords before searching. 
+    # 3. Example: If the user asks "what should I do in July based on the uploaded file?", your query parameter MUST be exactly "July tasks schedule goals".
+    # 4. Strip all filler words like "uploaded", "file", "document", "what", "according to".
     try:
         
         # Execute Hybrid Search
-        results =  _get_retriever(namespace).invoke(query)
+        results = await _get_retriever(namespace).ainvoke(query)
         
         if not results:
             return "No relevant information found in the vault."
@@ -177,8 +183,8 @@ async def query_vault(query: str, namespace: str = "default") -> str:
         return f"Retrieved Context:\n{formatted_context}"
         
     except Exception as e:
-        return f"Retrieval Error: {str(e)}"
+        return f"Retrieval Error: {str(e)}\n\n{traceback.format_exc()}"
 
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(transport='stdio')
