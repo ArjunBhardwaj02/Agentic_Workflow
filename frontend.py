@@ -15,6 +15,7 @@ if sys.platform == "win32":
 
 import os
 import uuid
+import psycopg
 from pathlib import Path
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage
@@ -31,127 +32,11 @@ UPLOAD_DIR = Path("./staging_vault")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ==========================================
-# 2. THE GLOBAL EXECUTION ENGINE
+# 2. SESSION STATE — MUST BE BEFORE SIDEBAR
 # ==========================================
-async def process_chat():
-    db_uri = os.getenv("POSTGRES_DB_URI")
-    if not db_uri:
-        st.error("❌ Environment variable 'POSTGRES_DB_URI' is missing. Check your .env file.")
-        st.stop()
+# Initialised here so ALL sidebar code can safely access session_state
 
-    current_thread = st.session_state["user_thread_id"]
-
-    async with AsyncPostgresSaver.from_conn_string(db_uri) as checkpointer:
-        await checkpointer.setup()
-        app = await build_graph(checkpointer)
-        
-        with st.chat_message("assistant"):
-            status_container = st.status("Agents are executing...", expanded=True)
-            final_response = ""
-            
-            inputs = {"messages": st.session_state["messages"]}
-            config = {"configurable": {"thread_id": current_thread}}
-            
-            async for event in app.astream(inputs, config=config, stream_mode="updates"):
-                for node_name, node_state in event.items():
-                    if node_name == "agent":
-                        msg = node_state["messages"][-1]
-                        
-                        if msg.tool_calls:
-                            for tool in msg.tool_calls:
-                                status_container.write(f"⚙️ **Action:** `{tool['name']}`")
-                        elif msg.content:
-                            if isinstance(msg.content, list):
-                                extracted_text = ""
-                                for block in msg.content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        extracted_text += block.get("text", "")
-                                final_response = extracted_text
-                            else:
-                                final_response = msg.content
-                                
-                    elif node_name == "tools":
-                        status_container.write("✅ **Tools Execution Complete**")
-
-            status_container.update(label="Complete", state="complete", expanded=False)
-            st.write(final_response)
-            return AIMessage(content=final_response)
-
-# ==========================================
-# 3. THE DUAL-CREDENTIAL SIDEBAR (INPUTS)
-# ==========================================
-with st.sidebar:
-    st.header("🔑 Developer Keys")
-    st.markdown("Provide your API keys to unlock agent capabilities.")
-    
-    user_gemini_key = st.text_input("Gemini API Key", type="password")
-    user_todoist_token = st.text_input("Todoist Token", type="password")
-    user_notion_key = st.text_input("Notion API Key", type="password")
-    user_pinecone_key = st.text_input("Pinecone API Key", type="password")
-    user_llamaparse_key = st.text_input("LlamaParse Key", type="password")
-
-# Inject environment variables
-if user_gemini_key: os.environ["GOOGLE_API_KEY"] = user_gemini_key
-if user_todoist_token: os.environ["TODOIST_API_TOKEN"] = user_todoist_token
-if user_pinecone_key: os.environ["PINECONE_API_KEY"] = user_pinecone_key
-if user_notion_key: os.environ["NOTION_API_KEY"] = user_notion_key
-if user_llamaparse_key: os.environ["LLAMA_CLOUD_API_KEY"] = user_llamaparse_key
-
-# ==========================================
-# 4. SIDEBAR ACTIONS & AUTOMATED INGESTION
-# ==========================================
-with st.sidebar:
-    st.markdown("---")
-    st.header("📅 Google Workspace")
-    
-    is_logged_in = getattr(st.user, "is_logged_in", False)
-    if not is_logged_in:
-        if st.button("🔗 Log in with Google"):
-            st.login("google")
-            st.stop()
-    else:
-        st.success(f"Connected as {st.user.name}")
-        if "access" in st.user.tokens:
-            os.environ["GOOGLE_ACCESS_TOKEN"] = st.user.tokens["access"]
-        if st.button("Disconnect"):
-            st.logout()
-            
-    st.markdown("---")
-    st.header("🗄️ Knowledge Vault")
-    uploaded_file = st.file_uploader("Stage Document", type=["pdf", "txt", "md"])
-
-    if uploaded_file is not None:
-        file_id = str(uuid.uuid4())
-        safe_filename = f"{file_id}_{uploaded_file.name}"
-        staging_file_path = UPLOAD_DIR / safe_filename
-        
-        if "last_processed_file" not in st.session_state or st.session_state["last_processed_file"] != uploaded_file.name:
-            with open(staging_file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-                
-            st.success("✅ File securely staged!")
-            
-            ingest_command = (
-                f"CRITICAL SYSTEM COMMAND: Execute the `ingest_document` tool on '{staging_file_path}'. "
-                f"You MUST reply ONLY with the exact raw text returned by the tool. "
-                f"If the tool returns an error, you must output the exact error. Do not summarize or hallucinate."
-            )
-            st.session_state["messages"].append(HumanMessage(content=ingest_command))
-            
-            ai_message = asyncio.run(process_chat()) 
-            st.session_state["messages"].append(ai_message)
-            st.session_state["last_processed_file"] = uploaded_file.name
-            st.rerun()
-
-# ==========================================
-# 5. SESSION & MEMORY MANAGEMENT
-# ==========================================
-if "user_thread_id" not in st.session_state:
-    st.session_state["user_thread_id"] = f"session_{uuid.uuid4()}"
-
-# THE EMPTY STATE: Provide links and clear instructions immediately
-if "messages" not in st.session_state:
-    welcome_text = """
+welcome_text = """
 👋 **Welcome to your Agentic Orchestrator!**
 
 To bring your AI agents online, you need to provide your API keys in the sidebar. If you don't have them yet, you can generate them for free using the official developer consoles below:
@@ -164,9 +49,180 @@ To bring your AI agents online, you need to provide your API keys in the sidebar
 
 Once your Gemini key is entered, the chat interface will unlock. 🚀
 """
+
+if "user_thread_id" not in st.session_state:
+    # Tie thread_id to Google identity if logged in —
+    # this makes history persist across refreshes for the same user.
+    # Falls back to a random guest ID if not logged in.
+    is_logged_in_early = getattr(st.user, "is_logged_in", False)
+    if is_logged_in_early and getattr(st.user, "email", None):
+        st.session_state["user_thread_id"] = f"user_{st.user.email}"
+    else:
+        st.session_state["user_thread_id"] = f"guest_{uuid.uuid4()}"
+
+if "messages" not in st.session_state:
     st.session_state["messages"] = [AIMessage(content=welcome_text)]
 
-# Render chat history, strictly hiding our backend system commands from the user
+# ==========================================
+# 3. THE GLOBAL EXECUTION ENGINE
+# ==========================================
+async def process_chat():
+    """
+    Compiles the multi-agent graph, connects to Postgres memory,
+    and streams events to the UI.
+    Always returns a valid AIMessage — never None.
+    """
+    try:
+        db_uri = os.getenv("POSTGRES_DB_URI")
+        if not db_uri:
+            st.error("❌ Environment variable 'POSTGRES_DB_URI' is missing. Check your .env file.")
+            return AIMessage(content="❌ Database connection error. POSTGRES_DB_URI is not set.")
+
+        current_thread = st.session_state["user_thread_id"]
+
+        # Use psycopg directly with prepare_threshold=0 to prevent
+        # DuplicatePreparedStatement errors caused by Streamlit reruns.
+        # pipeline=False is also required alongside this.
+        conn = await psycopg.AsyncConnection.connect(
+            db_uri,
+            prepare_threshold=0,  # disables prepared statements
+            autocommit=True       # required by LangGraph checkpointer
+        )
+        user_google_token = st.session_state.get("google_token")
+
+        async with AsyncPostgresSaver(conn) as checkpointer:
+            await checkpointer.setup()
+            app = await build_graph(checkpointer,user_token=user_google_token)
+
+            with st.chat_message("assistant"):
+                status_container = st.status("Agents are executing...", expanded=True)
+                final_response = ""
+
+                inputs = {"messages": st.session_state["messages"]}
+                config = {"configurable": {"thread_id": current_thread}}
+
+                async for event in app.astream(inputs, config=config, stream_mode="updates"):
+                    for node_name, node_state in event.items():
+                        if node_name == "agent":
+                            msg = node_state["messages"][-1]
+
+                            if msg.tool_calls:
+                                for tool in msg.tool_calls:
+                                    status_container.write(f"⚙️ **Action:** `{tool['name']}`")
+                            elif msg.content:
+                                if isinstance(msg.content, list):
+                                    extracted_text = ""
+                                    for block in msg.content:
+                                        if isinstance(block, dict) and block.get("type") == "text":
+                                            extracted_text += block.get("text", "")
+                                    final_response = extracted_text
+                                else:
+                                    final_response = msg.content
+
+                        elif node_name == "tools":
+                            status_container.write("✅ **Tools Execution Complete**")
+
+                status_container.update(label="Complete", state="complete", expanded=False)
+                st.write(final_response)
+                return AIMessage(content=final_response or "Agent completed with no response.")
+
+    except Exception as e:
+        st.error(f"❌ Agent error: {str(e)}")
+        return AIMessage(content=f"❌ Error: {str(e)}")
+
+# ==========================================
+# 4. THE DUAL-CREDENTIAL SIDEBAR (INPUTS)
+# ==========================================
+with st.sidebar:
+    st.header("🔑 Developer Keys")
+    st.markdown("Provide your API keys to unlock agent capabilities.")
+
+    user_gemini_key     = st.text_input("Gemini API Key",   type="password")
+    user_todoist_token  = st.text_input("Todoist Token",    type="password")
+    user_notion_key     = st.text_input("Notion API Key",   type="password")
+    user_pinecone_key   = st.text_input("Pinecone API Key", type="password")
+    user_llamaparse_key = st.text_input("LlamaParse Key",   type="password")
+
+# ==========================================
+# 4.5. ENVIRONMENT INJECTION
+# ==========================================
+if user_gemini_key:     os.environ["GOOGLE_API_KEY"]      = user_gemini_key
+if user_todoist_token:  os.environ["TODOIST_API_TOKEN"]   = user_todoist_token
+if user_pinecone_key:   os.environ["PINECONE_API_KEY"]    = user_pinecone_key
+if user_notion_key:     os.environ["NOTION_API_KEY"]      = user_notion_key
+if user_llamaparse_key: os.environ["LLAMA_CLOUD_API_KEY"] = user_llamaparse_key
+
+# ==========================================
+# 5. SIDEBAR ACTIONS & AUTOMATED INGESTION
+# ==========================================
+with st.sidebar:
+    st.markdown("---")
+    st.header("📅 Google Workspace")
+    st.markdown("Connect identity services securely.")
+
+    is_logged_in = getattr(st.user, "is_logged_in", False)
+
+    if not is_logged_in:
+        if st.button("🔗 Log in with Google"):
+            st.login("google")
+            st.stop()
+    else:
+        st.success(f"Connected as {st.user.name}")
+        if "access" in st.user.tokens:
+            st.session_state["google_token"] = st.user.tokens["access"]
+        if st.button("Disconnect"):
+            st.logout()
+
+        # Re-bind thread_id to email now that we know it
+        # (covers the case where user logs in after page load)
+        if getattr(st.user, "email", None):
+            email_thread = f"user_{st.user.email}"
+            if st.session_state["user_thread_id"] != email_thread:
+                st.session_state["user_thread_id"] = email_thread
+
+    st.markdown("---")
+
+    # KNOWLEDGE VAULT (AUTOMATED INGESTION)
+    st.header("🗄️ Knowledge Vault")
+    uploaded_file = st.file_uploader("Stage Document", type=["pdf", "txt", "md"])
+
+    if uploaded_file is not None:
+        # Guard: Gemini key must exist before firing the agent
+        if not os.environ.get("GOOGLE_API_KEY"):
+            st.warning("⚠️ Enter your **Gemini API Key** above before uploading a document.")
+        else:
+            file_id = str(uuid.uuid4())
+            safe_filename = f"{file_id}_{uploaded_file.name}"
+            staging_file_path = UPLOAD_DIR / safe_filename
+
+            # Idempotency guard — don't re-ingest the same file on every rerun
+            if (
+                "last_processed_file" not in st.session_state
+                or st.session_state["last_processed_file"] != uploaded_file.name
+            ):
+                with open(staging_file_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+                st.success("✅ File securely staged!")
+
+                ingest_command = (
+                    f"CRITICAL SYSTEM COMMAND: Execute the `ingest_document` tool on '{staging_file_path}'. "
+                    f"You MUST reply ONLY with the exact raw text returned by the tool. "
+                    f"If the tool returns an error, you must output the exact error. Do not summarize or hallucinate."
+                )
+
+                st.session_state["messages"].append(HumanMessage(content=ingest_command))
+
+                ai_message = asyncio.run(process_chat())
+
+                st.session_state["messages"].append(ai_message)
+                st.session_state["last_processed_file"] = uploaded_file.name
+                st.rerun()
+
+# ==========================================
+# 6. RENDER CHAT HISTORY
+# ==========================================
+# Strictly hide backend system commands from the user-facing chat
 for msg in st.session_state["messages"]:
     if "CRITICAL SYSTEM COMMAND:" in getattr(msg, "content", ""):
         continue
@@ -176,9 +232,8 @@ for msg in st.session_state["messages"]:
         st.chat_message("assistant").write(msg.content)
 
 # ==========================================
-# 6. USER CHAT TRIGGER
+# 7. USER CHAT TRIGGER
 # ==========================================
-# Check if the primary key exists to enable the chat
 is_chat_enabled = bool(os.environ.get("GOOGLE_API_KEY"))
 
 if not is_chat_enabled:
@@ -190,8 +245,7 @@ if user_input:
     st.chat_message("user").write(user_input)
     st.session_state["messages"].append(HumanMessage(content=user_input))
 
-    # Fire the engine manually
     ai_message = asyncio.run(process_chat())
-    
+
     st.session_state["messages"].append(ai_message)
     st.rerun()

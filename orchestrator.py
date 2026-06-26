@@ -24,7 +24,7 @@ CRITICAL ROUTING RULES:
 3. AMBIGUITY: If the user asks about a file but you don't know if it's in the Vault or Google Drive, ask them to clarify which system to search.
 """
 
-async def build_graph(checkpointer: BaseCheckpointSaver = None):
+async def build_graph(checkpointer: BaseCheckpointSaver = None, user_token = None):
     #Declaring the Servers
     SERVERS = {
         "ragsystem": {
@@ -63,7 +63,8 @@ async def build_graph(checkpointer: BaseCheckpointSaver = None):
         }
     }
 
-
+    if user_token:
+        SERVERS["google-workspace"]["env"]["GOOGLE_ACCESS_TOKEN"] = user_token
 
     model = ChatGoogleGenerativeAI(api_key = os.getenv("GOOGLE_API_KEY"),model = "gemma-4-31b-it")
     client = MultiServerMCPClient(SERVERS)
