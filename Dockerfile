@@ -26,8 +26,11 @@ RUN uv pip install --system -r requirements.txt
 # 7. Copy application code
 COPY . .
 
-# 8. Expose Port
-EXPOSE 8501
+# 8. Expose Port (Cloud Run expects 8080)
+EXPOSE 8080
 
 # 9. Ignition Switch
-CMD ["streamlit", "run", "frontend.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD streamlit run frontend.py \
+    --server.port $PORT \
+    --server.address 0.0.0.0 \
+    --server.headless true
