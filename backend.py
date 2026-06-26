@@ -7,65 +7,41 @@ load_dotenv()
 
 app = FastAPI(title="MCP Orcherstrator Gateway")
 SERVERS = {
-    "filesystem":{
-        "transport": "stdio",
-        "command": "uv",
-        "args": [
-            "run",
-            "fastmcp",
-            "run",
-            "E:/agentic_workflow/filesystem.py"
-       ]
-    },
-    "ragsystem":{
-        "transport": "stdio",
-        "command": "uv",
-        "args": [
-            "run",
-            "fastmcp",
-            "run",
-            "E:/agentic_workflow/ragsystem.py"
-       ]
-    },
-    "google-workspace":{
-        "transport": "stdio",
-        "command": "uv",
-        "args": [
-            "run",
-            "fastmcp",
-            "run",
-            "E:/agentic_workflow/custom_doc_and_sheet.py"
-       ]
-    },
-    "duckduckgo-search": {
-        "transport": "stdio",
-        "command": "uvx",
-        "args": [
-            "--quiet", # avoid downloading status logs
-            "duckduckgo-mcp-server"
-        ]
-    },
-    "notion": {
-    "transport": "stdio",
-    "command": "npx.cmd",
-    "args": ["-y", "@notionhq/notion-mcp-server"],
-    "env": {
-        "OPENAPI_MCP_HEADERS": json.dumps({
-            "Authorization": f"Bearer {os.getenv('NOTION_API_TOKEN')}",
-            "Notion-Version": "2022-06-28"
-        })
+        "ragsystem": {
+            "transport": "stdio",
+            "command": "fastmcp",
+            "args": ["run", "./ragsystem.py"],
+            "env": {**os.environ}
+        },
+        "google-workspace": {
+            "transport": "stdio",
+            "command": "fastmcp",
+            "args": ["run", "./custom_doc_and_sheet.py"],
+            "env": {**os.environ}
+        },
+        "duckduckgo-search": {
+            "transport": "stdio",
+            "command": "duckduckgo-mcp-server",
+            "args": []
+        },
+        "notion": {
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@notionhq/notion-mcp-server"],
+            "env": {
+                "OPENAPI_MCP_HEADERS": json.dumps({
+                    "Authorization": f"Bearer {os.getenv('NOTION_API_KEY')}",
+                    "Notion-Version": "2022-06-28"
+                })
+            }
+        },
+        "todoist": {
+            "transport": "stdio",
+            "command": "python",
+            "env": {**os.environ},
+            "args": ["./todoist.py"]
+        }
     }
-},
-    "todoist": {
-        "transport": "stdio",
-        "command": "uv",
-        "args": [
-            "run",
-            "python",
-            "E:/agentic_workflow/todoist.py"
-        ]
-    }
-}
 
 @app.post('/api/v1/execute')
 async def execute_tool(request:Structure):

@@ -27,12 +27,6 @@ CRITICAL ROUTING RULES:
 async def build_graph(checkpointer: BaseCheckpointSaver = None):
     #Declaring the Servers
     SERVERS = {
-        "filesystem": {
-            "transport": "stdio",
-            "command": "fastmcp",
-            "args": ["run", "./filesystem.py"],
-            "env": {**os.environ}
-        },
         "ragsystem": {
             "transport": "stdio",
             "command": "fastmcp",
