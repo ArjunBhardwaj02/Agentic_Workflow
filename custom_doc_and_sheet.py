@@ -24,22 +24,27 @@ mcp = FastMCP("custom google workspace")
 #Authentication
 def get_google_services():
     """Authenticates and returns the Docs and Sheets services object."""
-    creds = None
+
+    access_token = os.environ.get("GOOGLE_ACCESS_TOKEN")
+    
+    if not access_token:
+        raise ValueError("CRITICAL: No Google Access Token found. You must log in via the Streamlit sidebar.")
+    creds = Credentials(token=access_token)
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first time.
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json',SCOPES)
     
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json',scopes=SCOPES)
-            # This will pop up a browser window on your machine
-            creds = flow.run_local_server(port=0)
+    # if not creds or not creds.valid:
+    #     if creds and creds.expired and creds.refresh_token:
+    #         creds.refresh(Request())
+    #     else:
+    #         flow = InstalledAppFlow.from_client_secrets_file('credentials.json',scopes=SCOPES)
+    #         # This will pop up a browser window on your machine
+    #         creds = flow.run_local_server(port=0)
 
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+    #         with open('token.json', 'w') as token:
+    #             token.write(creds.to_json())
 
     sheets_services=build('sheets','v4',credentials=creds)
     docs_services = build("docs",'v1',credentials=creds)
