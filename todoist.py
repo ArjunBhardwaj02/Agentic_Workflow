@@ -85,7 +85,7 @@ async def complete_task(task_id: str) -> str:
     try:
         api = get_todoist_api()
         # The Todoist API uses close_task to mark it as done
-        is_success = api.close_task(task_id=task_id)
+        is_success = api.complete_task(task_id=task_id)
         if is_success:
             return f"Success: Task {task_id} has been marked as completed."
         else:
