@@ -41,7 +41,7 @@ def get_embeddings():
     global _embeddings
     if _embeddings is None:
         print("Booting HuggingFace Embeddings into memory for the first time...",file=sys.stderr)
-        _embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+        _embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001" ,output_dimensionality=768)
     return _embeddings
 
 def get_bm25_encoder():
@@ -69,7 +69,7 @@ def get_pinecone_index():
         db.create_index(
             name=index_name,
             spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-            dimension=384,
+            dimension=768,
             metric="dotproduct" 
         )
     return db.Index(index_name)
