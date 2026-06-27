@@ -57,6 +57,12 @@ if "user_thread_id" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state["messages"] = [AIMessage(content=welcome_text)]
 
+# Tracks whether a document was uploaded in THIS session
+# False by default — prevents agent searching stale vectors from old sessions
+
+if "vault_active" not in st.session_state:
+    st.session_state["vault_active"] = False
+
 # ==========================================
 # 2.5. USER NAMESPACE HELPER
 # ==========================================
@@ -237,6 +243,7 @@ with st.sidebar:
                 ai_message = asyncio.run(process_chat())
                 st.session_state["messages"].append(ai_message)
                 st.session_state["last_processed_file"] = uploaded_file.name
+                st.session_state["vault_active"] = True  
                 st.rerun()
 
 # ==========================================
@@ -265,10 +272,18 @@ if user_input:
 
     # Inject namespace hint so agent always searches the correct user's vault
     user_namespace = get_user_namespace()
-    augmented_input = (
+
+    if st.session_state.get("vault_active"):
+        augmented_input = (
+            f"{user_input}\n\n"
+            f"[SYSTEM: If you need to search the knowledge vault, "
+            f"always use namespace='{user_namespace}']"
+        )
+    else:
+        augmented_input = (
         f"{user_input}\n\n"
-        f"[SYSTEM: If you need to search the knowledge vault, "
-        f"always use namespace='{user_namespace}']"
+            f"[SYSTEM: No document has been uploaded this session. "
+            f"Do NOT call query_vault — it will return stale data.]"
     )
 
     st.session_state["messages"].append(HumanMessage(content=augmented_input))
