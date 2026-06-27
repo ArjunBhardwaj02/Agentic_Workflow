@@ -1,13 +1,27 @@
-# Environments & Cache
-.venv/
-venv/
-__pycache__/
-*.pyc
-.git/
+# Git
+.git
+.gitignore
 
-# Local Data & Secrets
-staging_vault/
+# Python Environments & Cache
+.venv
+venv
+env
+__pycache__
+*.pyc
+.pytest_cache
+
+# Node
+node_modules
+npm-debug.log
+
+# Project Specific & Secrets
 .env
-.streamlit/secrets.toml
 credentials.json
 token.json
+.streamlit/secrets.toml
+staging_vault/
+workspace/
+
+# OS hidden files
+.DS_Store
+Thumbs.db
