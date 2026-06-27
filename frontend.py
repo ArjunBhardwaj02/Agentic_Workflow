@@ -172,15 +172,9 @@ with st.sidebar:
     is_logged_in = getattr(st.user, "is_logged_in", False)
 
     if not is_logged_in:
+        # Scopes are configured via client_kwargs in .streamlit/secrets.toml
         if st.button("🔗 Log in with Google"):
-            st.login("google", scopes=[
-                "https://www.googleapis.com/auth/calendar",
-                "https://www.googleapis.com/auth/calendar.events",
-                "https://www.googleapis.com/auth/documents",
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://mail.google.com/",
-                "https://www.googleapis.com/auth/drive.readonly"
-            ])
+            st.login("google")
             st.stop()
     else:
         st.success(f"Connected as {st.user.name}")
