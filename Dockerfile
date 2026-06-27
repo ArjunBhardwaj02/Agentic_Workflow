@@ -26,13 +26,11 @@
     # 7. Copy application code
     COPY . .
 
+    # Make entrypoint executable
+    RUN chmod +x /app/entrypoint.sh
+
     # 8. Expose Port (Cloud Run expects 8080)
     EXPOSE 8080
 
-    ENV PORT=8080
-
     # 9. Ignition Switch
-    CMD streamlit run frontend.py \
-        --server.port $PORT \
-        --server.address 0.0.0.0 \
-        --server.headless true
+   CMD ["/app/entrypoint.sh"]
