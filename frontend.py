@@ -127,6 +127,19 @@ async def process_chat():
                 return AIMessage(content=final_response or "Agent completed with no response.")
 
     except Exception as e:
+        error_str = str(e).lower()
+
+        # Detect API quota / rate limit errors
+        if any(keyword in error_str for keyword in [
+            "quota", "rate limit", "ratelimit", "429",
+            "resource_exhausted", "too many requests",
+            "exceeded", "limit reached"
+        ]):
+            friendly = "⚠️ API limit reached. Please wait a moment and try again, or check your API quota on Google AI Studio."
+            st.warning(friendly)
+            return AIMessage(content=friendly)
+
+        # All other errors
         st.error(f"❌ Agent error: {str(e)}")
         return AIMessage(content=f"❌ Error: {str(e)}")
 

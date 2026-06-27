@@ -10,7 +10,7 @@ import traceback
 from langchain_text_splitters import RecursiveCharacterTextSplitter, MarkdownHeaderTextSplitter
 from pinecone import Pinecone, ServerlessSpec
 from langchain_community.retrievers import PineconeHybridSearchRetriever
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from llama_parse import LlamaParse
 from pinecone_text.sparse import BM25Encoder
 
@@ -41,7 +41,7 @@ def get_embeddings():
     global _embeddings
     if _embeddings is None:
         print("Booting HuggingFace Embeddings into memory for the first time...",file=sys.stderr)
-        _embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        _embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
     return _embeddings
 
 def get_bm25_encoder():
