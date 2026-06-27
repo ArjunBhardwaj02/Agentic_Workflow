@@ -34,8 +34,6 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # ==========================================
 # 2. SESSION STATE — MUST BE BEFORE SIDEBAR
 # ==========================================
-# Initialised here so ALL sidebar code can safely access session_state
-
 welcome_text = """
 👋 **Welcome to your Agentic Orchestrator!**
 
@@ -79,20 +77,17 @@ async def process_chat():
             return AIMessage(content="❌ Database connection error. POSTGRES_DB_URI is not set.")
 
         current_thread = st.session_state["user_thread_id"]
-
-        # Use psycopg directly with prepare_threshold=0 to prevent
-        # DuplicatePreparedStatement errors caused by Streamlit reruns.
-        # pipeline=False is also required alongside this.
-        conn = await psycopg.AsyncConnection.connect(
-            db_uri,
-            prepare_threshold=0,  # disables prepared statements
-            autocommit=True       # required by LangGraph checkpointer
-        )
         user_google_token = st.session_state.get("google_token")
 
-        async with AsyncPostgresSaver(conn) as checkpointer:
+      
+        async with await psycopg.AsyncConnection.connect(
+            db_uri,
+            prepare_threshold=0,  # disables prepared statements — fixes DuplicatePreparedStatement
+            autocommit=True       # required by LangGraph checkpointer
+        ) as conn:
+            checkpointer = AsyncPostgresSaver(conn)
             await checkpointer.setup()
-            app = await build_graph(checkpointer,user_token=user_google_token)
+            app = await build_graph(checkpointer, user_token=user_google_token)
 
             with st.chat_message("assistant"):
                 status_container = st.status("Agents are executing...", expanded=True)
