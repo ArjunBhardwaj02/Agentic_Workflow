@@ -1,5 +1,15 @@
 import sys
 import asyncio
+import os
+import uuid
+import psycopg
+import jwt
+from pathlib import Path
+import streamlit as st
+from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from orchestrator import build_graph
+from streamlit_oauth import OAuth2Component
 
 # ==========================================
 # 0. ASYNC SHOCK ABSORBER (CRITICAL)
@@ -12,15 +22,6 @@ nest_asyncio.apply()
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-import os
-import uuid
-import psycopg
-from pathlib import Path
-import streamlit as st
-from langchain_core.messages import HumanMessage, AIMessage
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from orchestrator import build_graph
 
 # ==========================================
 # 1. PAGE CONFIG & STAGING DIRECTORY
@@ -49,14 +50,8 @@ Once your Gemini key is entered, the chat interface will unlock. 🚀
 """
 
 if "user_thread_id" not in st.session_state:
-    # Tie thread_id to Google identity if logged in —
-    # this makes history persist across refreshes for the same user.
-    # Falls back to a random guest ID if not logged in.
-    is_logged_in_early = getattr(st.user, "is_logged_in", False)
-    if is_logged_in_early and getattr(st.user, "email", None):
-        st.session_state["user_thread_id"] = f"user_{st.user.email}"
-    else:
-        st.session_state["user_thread_id"] = f"guest_{uuid.uuid4()}"
+    # Default to guest until OAuth is complete
+    st.session_state["user_thread_id"] = f"guest_{uuid.uuid4()}"
 
 if "messages" not in st.session_state:
     st.session_state["messages"] = [AIMessage(content=welcome_text)]
@@ -79,7 +74,6 @@ async def process_chat():
         current_thread = st.session_state["user_thread_id"]
         user_google_token = st.session_state.get("google_token")
 
-      
         async with await psycopg.AsyncConnection.connect(
             db_uri,
             prepare_threshold=0,  # disables prepared statements — fixes DuplicatePreparedStatement
@@ -168,25 +162,58 @@ with st.sidebar:
     st.header("📅 Google Workspace")
     st.markdown("Connect identity services securely.")
 
-    is_logged_in = getattr(st.user, "is_logged_in", False)
+    try:
+        CLIENT_ID = st.secrets["auth"]["google"]["client_id"]
+        CLIENT_SECRET = st.secrets["auth"]["google"]["client_secret"]
+        REDIRECT_URI = st.secrets["auth"]["redirect_uri"]
+    except KeyError:
+        st.error("❌ Missing OAuth secrets in secrets.toml.")
+        st.stop()
 
-    if not is_logged_in:
-        if st.button("🔗 Log in with Google"):
-            st.login("google")
-            st.stop()
+    AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+    TOKEN_URL = "https://oauth2.googleapis.com/token"
+    REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+    
+    # CRITICAL: Requesting Drive Read-Only Scope
+    SCOPES = "openid email profile https://www.googleapis.com/auth/drive.readonly"
+
+    oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, AUTHORIZE_URL, TOKEN_URL, TOKEN_URL, REVOKE_URL)
+
+    if "google_token_data" not in st.session_state:
+        result = oauth2.authorize_button(
+            name="🔗 Log in with Google",
+            icon="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg",
+            redirect_uri=REDIRECT_URI,
+            scope=SCOPES,
+            key="google_auth_btn",
+            use_container_width=True
+        )
+        
+        if result and "token" in result:
+            st.session_state["google_token_data"] = result["token"]
+            st.rerun()
     else:
-        st.success(f"Connected as {st.user.name}")
-        if "access" in st.user.tokens:
-            st.session_state["google_token"] = st.user.tokens["access"]
-        if st.button("Disconnect"):
-            st.logout()
-
-        # Re-bind thread_id to email now that we know it
-        # (covers the case where user logs in after page load)
-        if getattr(st.user, "email", None):
-            email_thread = f"user_{st.user.email}"
-            if st.session_state["user_thread_id"] != email_thread:
+        token_data = st.session_state["google_token_data"]
+        st.session_state["google_token"] = token_data.get("access_token")
+        
+        try:
+            id_info = jwt.decode(token_data.get("id_token", ""), options={"verify_signature": False})
+            email = id_info.get("email", "Unknown User")
+            st.success(f"Connected as {email}")
+            
+            email_thread = f"user_{email}"
+            if st.session_state.get("user_thread_id") != email_thread:
                 st.session_state["user_thread_id"] = email_thread
+        except Exception:
+            st.success("Connected securely.")
+
+        if st.button("Disconnect"):
+            del st.session_state["google_token_data"]
+            if "google_token" in st.session_state:
+                del st.session_state["google_token"]
+            # Revert to guest thread
+            st.session_state["user_thread_id"] = f"guest_{uuid.uuid4()}"
+            st.rerun()
 
     st.markdown("---")
 
@@ -195,7 +222,6 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Stage Document", type=["pdf", "txt", "md"])
 
     if uploaded_file is not None:
-        # Guard: Gemini key must exist before firing the agent
         if not os.environ.get("GOOGLE_API_KEY"):
             st.warning("⚠️ Enter your **Gemini API Key** above before uploading a document.")
         else:
@@ -203,7 +229,6 @@ with st.sidebar:
             safe_filename = f"{file_id}_{uploaded_file.name}"
             staging_file_path = UPLOAD_DIR / safe_filename
 
-            # Idempotency guard — don't re-ingest the same file on every rerun
             if (
                 "last_processed_file" not in st.session_state
                 or st.session_state["last_processed_file"] != uploaded_file.name
@@ -220,9 +245,7 @@ with st.sidebar:
                 )
 
                 st.session_state["messages"].append(HumanMessage(content=ingest_command))
-
                 ai_message = asyncio.run(process_chat())
-
                 st.session_state["messages"].append(ai_message)
                 st.session_state["last_processed_file"] = uploaded_file.name
                 st.rerun()
@@ -230,7 +253,6 @@ with st.sidebar:
 # ==========================================
 # 6. RENDER CHAT HISTORY
 # ==========================================
-# Strictly hide backend system commands from the user-facing chat
 for msg in st.session_state["messages"]:
     if "CRITICAL SYSTEM COMMAND:" in getattr(msg, "content", ""):
         continue
