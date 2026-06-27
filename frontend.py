@@ -175,7 +175,17 @@ with st.sidebar:
     REVOKE_URL = "https://oauth2.googleapis.com/revoke"
     
     # CRITICAL: Requesting Drive Read-Only Scope
-    SCOPES = "openid email profile https://www.googleapis.com/auth/drive.readonly"
+    SCOPES = " ".join([
+    "openid",
+    "email", 
+    "profile",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/drive.readonly"
+])
 
     oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, AUTHORIZE_URL, TOKEN_URL, TOKEN_URL, REVOKE_URL)
 
@@ -186,7 +196,11 @@ with st.sidebar:
             redirect_uri=REDIRECT_URI,
             scope=SCOPES,
             key="google_auth_btn",
-            use_container_width=True
+            use_container_width=True,
+            extras_params={
+        "access_type": "offline",      # gets refresh token
+        "prompt": "consent",           # always shows consent screen with all scopes
+    }
         )
         
         if result and "token" in result:
