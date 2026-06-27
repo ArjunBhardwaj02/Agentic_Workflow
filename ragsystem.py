@@ -34,7 +34,7 @@ mcp = FastMCP("Semantic RAG Vault")
 # 1. Global Holders (Start empty)
 _embeddings = None
 _bm25_encoder = None
-namespace = "__default__"
+namespace = ""
 
 def get_embeddings():
     """Loads the ML model ONLY on the first execution and caches it."""
@@ -89,8 +89,7 @@ def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
 # MCP TOOLS
 
 @mcp.tool()
-# async def ingest_document(filepath: str, namespace: str = "default") -> str:
-async def ingest_document(filepath: str) -> str:
+async def ingest_document(filepath: str, namespace : str = 'default') -> str:
     """
     Reads a local PDF or text file, extracts structured markdown, chunks it, 
     and saves it to the Semantic Vault vector database using Hybrid embeddings.
@@ -159,17 +158,11 @@ async def ingest_document(filepath: str) -> str:
 
 
 @mcp.tool()
-# async def query_vault(query: str, namespace: str = "default") -> str:
-async def query_vault(query: str) -> str:
+async def query_vault(query: str, namespace: str = "default") -> str:
     """
     Searches the Semantic Vault vector database for information.
     
     """
-    # CRITICAL USAGE RULES FOR THE AI:
-    # 1. DO NOT pass full conversational sentences into this query. 
-    # 2. You MUST extract and optimize the core keywords before searching. 
-    # 3. Example: If the user asks "what should I do in July based on the uploaded file?", your query parameter MUST be exactly "July tasks schedule goals".
-    # 4. Strip all filler words like "uploaded", "file", "document", "what", "according to".
     try:
         
         # Execute Hybrid Search

@@ -48,8 +48,6 @@ Once your Gemini key is entered, the chat interface will unlock. 🚀
 """
 
 if "user_thread_id" not in st.session_state:
-    # Tie thread_id to Google identity if already logged in,
-    # otherwise use a guest ID until login completes.
     is_logged_in_early = getattr(st.user, "is_logged_in", False)
     if is_logged_in_early and getattr(st.user, "email", None):
         st.session_state["user_thread_id"] = f"user_{st.user.email}"
@@ -58,6 +56,22 @@ if "user_thread_id" not in st.session_state:
 
 if "messages" not in st.session_state:
     st.session_state["messages"] = [AIMessage(content=welcome_text)]
+
+# ==========================================
+# 2.5. USER NAMESPACE HELPER
+# ==========================================
+def get_user_namespace() -> str:
+    """
+    Returns a Pinecone namespace tied to the logged-in user's email.
+    - Logged-in users: stable namespace across sessions (user_name_domain_com)
+    - Guest users: session-scoped namespace (guest_{uuid})
+    - Sanitized to be Pinecone-safe (no @ or . characters)
+    """
+    is_logged_in = getattr(st.user, "is_logged_in", False)
+    if is_logged_in and getattr(st.user, "email", None):
+        safe_email = st.user.email.replace("@", "_").replace(".", "_")
+        return f"user_{safe_email}"
+    return st.session_state.get("user_thread_id", "guest_default")
 
 # ==========================================
 # 3. THE GLOBAL EXECUTION ENGINE
@@ -77,10 +91,6 @@ async def process_chat():
         current_thread = st.session_state["user_thread_id"]
         user_google_token = st.session_state.get("google_token")
 
-        # async with on the connection — AsyncPostgresSaver(conn) does not
-        # support the async context manager protocol for raw connections.
-        # prepare_threshold=0 disables prepared statements to prevent
-        # DuplicatePreparedStatement errors on Streamlit reruns.
         async with await psycopg.AsyncConnection.connect(
             db_uri,
             prepare_threshold=0,
@@ -125,7 +135,6 @@ async def process_chat():
     except Exception as e:
         error_str = str(e).lower()
 
-        # Detect API quota / rate limit errors
         if any(keyword in error_str for keyword in [
             "quota", "rate limit", "ratelimit", "429",
             "resource_exhausted", "too many requests",
@@ -135,7 +144,6 @@ async def process_chat():
             st.warning(friendly)
             return AIMessage(content=friendly)
 
-        # All other errors
         st.error(f"❌ Agent error: {str(e)}")
         return AIMessage(content=f"❌ Error: {str(e)}")
 
@@ -184,7 +192,6 @@ with st.sidebar:
             st.logout()
 
         # Re-bind thread_id to email now that we know it
-        # (covers the case where user logs in after page load)
         if getattr(st.user, "email", None):
             email_thread = f"user_{st.user.email}"
             if st.session_state.get("user_thread_id") != email_thread:
@@ -197,7 +204,6 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Stage Document", type=["pdf", "txt", "md"])
 
     if uploaded_file is not None:
-        # Guard: Gemini key must exist before firing the agent
         if not os.environ.get("GOOGLE_API_KEY"):
             st.warning("⚠️ Enter your **Gemini API Key** above before uploading a document.")
         else:
@@ -205,7 +211,6 @@ with st.sidebar:
             safe_filename = f"{file_id}_{uploaded_file.name}"
             staging_file_path = UPLOAD_DIR / safe_filename
 
-            # Idempotency guard — don't re-ingest the same file on every rerun
             if (
                 "last_processed_file" not in st.session_state
                 or st.session_state["last_processed_file"] != uploaded_file.name
@@ -215,10 +220,17 @@ with st.sidebar:
 
                 st.success("✅ File securely staged!")
 
+                # Get the user's personal namespace — isolates their data in Pinecone
+                # and auto-deletes their previous document on new upload
+                user_namespace = get_user_namespace()
+
                 ingest_command = (
-                    f"CRITICAL SYSTEM COMMAND: Execute the `ingest_document` tool on '{staging_file_path}'. "
-                    f"You MUST reply ONLY with the exact raw text returned by the tool. "
-                    f"If the tool returns an error, you must output the exact error. Do not summarize or hallucinate."
+                    f"CRITICAL SYSTEM COMMAND: Execute the `ingest_document` tool. "
+                    f"You MUST pass BOTH parameters exactly: "
+                    f"filepath='{staging_file_path}', namespace='{user_namespace}'. "
+                    f"Reply ONLY with the exact raw text returned by the tool. "
+                    f"If the tool returns an error, output the exact error. "
+                    f"Do not summarize or hallucinate."
                 )
 
                 st.session_state["messages"].append(HumanMessage(content=ingest_command))
@@ -230,7 +242,6 @@ with st.sidebar:
 # ==========================================
 # 6. RENDER CHAT HISTORY
 # ==========================================
-# Strictly hide backend system commands from the user-facing chat
 for msg in st.session_state["messages"]:
     if "CRITICAL SYSTEM COMMAND:" in getattr(msg, "content", ""):
         continue
@@ -251,9 +262,16 @@ user_input = st.chat_input("Command your agents...", disabled=not is_chat_enable
 
 if user_input:
     st.chat_message("user").write(user_input)
-    st.session_state["messages"].append(HumanMessage(content=user_input))
 
+    # Inject namespace hint so agent always searches the correct user's vault
+    user_namespace = get_user_namespace()
+    augmented_input = (
+        f"{user_input}\n\n"
+        f"[SYSTEM: If you need to search the knowledge vault, "
+        f"always use namespace='{user_namespace}']"
+    )
+
+    st.session_state["messages"].append(HumanMessage(content=augmented_input))
     ai_message = asyncio.run(process_chat())
-
     st.session_state["messages"].append(ai_message)
     st.rerun()
