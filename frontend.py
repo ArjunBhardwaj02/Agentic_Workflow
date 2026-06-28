@@ -230,7 +230,7 @@ with st.sidebar:
                 ingest_command = (
                     f"CRITICAL SYSTEM COMMAND: Execute the `ingest_document` tool. "
                     f"You MUST pass BOTH parameters exactly: "
-                    f"filepath='{staging_file_path}', namespace='default'. "
+                    f"filepath='{staging_file_path}', namespace=''. "
                     f"Reply ONLY with the exact raw text returned by the tool. "
                     f"If the tool returns an error, output the exact error. "
                     f"Do not summarize or hallucinate."
@@ -289,7 +289,7 @@ if user_input:
         augmented_input = (
             f"{user_input}\n\n"
             f"[SYSTEM INSTRUCTION — MANDATORY: The user has uploaded a document. "
-            f"You MUST call the `query_vault` tool with namespace='default' "
+            f"You MUST call the `query_vault` tool with namespace='' "
             f"to answer any question about the uploaded document. "
             f"Do NOT answer from memory. Call the tool first.]"
         )

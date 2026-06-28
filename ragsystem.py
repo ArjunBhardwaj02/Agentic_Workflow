@@ -15,15 +15,17 @@ from llama_parse import LlamaParse
 from pinecone_text.sparse import BM25Encoder
 
 # load_dotenv()
-load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=True)
+load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
 
 # Safely ensure BM25 has its English dictionary
-# try:
-#     nltk.data.find('corpora/stopwords')
-# except LookupError:
-#     nltk.download('stopwords', quiet=True)
-# except Exception:
-#     pass
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    print("Downloading NLTK dependencies...", file=sys.stderr)
+    nltk.download('punkt', quiet=True)
+    nltk.download('punkt_tab', quiet=True)
+except Exception:
+    pass
 
 # ==========================================
 # GLOBAL INITIALIZATION 
@@ -34,14 +36,16 @@ mcp = FastMCP("Semantic RAG Vault")
 # 1. Global Holders (Start empty)
 _embeddings = None
 _bm25_encoder = None
-namespace = ""
 
 def get_embeddings():
     """Loads the ML model ONLY on the first execution and caches it."""
     global _embeddings
     if _embeddings is None:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError("GOOGLE_API_KEY is missing.")
         print("Booting HuggingFace Embeddings into memory for the first time...",file=sys.stderr)
-        _embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001" ,output_dimensionality=768)
+        _embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2" ,output_dimensionality=768,api_key=api_key)
     return _embeddings
 
 def get_bm25_encoder():
@@ -65,7 +69,7 @@ def get_pinecone_index():
     
     # Check and create the index safely at runtime
     if not db.has_index(index_name):
-        print(f"Creating Pinecone index '{index_name}'...")
+        print(f"Creating Pinecone index '{index_name}'...",file = sys.stderr)
         db.create_index(
             name=index_name,
             spec=ServerlessSpec(cloud="aws", region="us-east-1"),
@@ -89,7 +93,7 @@ def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
 # MCP TOOLS
 
 @mcp.tool()
-async def ingest_document(filepath: str, namespace : str = 'default') -> str:
+async def ingest_document(filepath: str, namespace : str = '') -> str:
     """
     Reads a local PDF or text file, extracts structured markdown, chunks it, 
     and saves it to the Semantic Vault vector database using Hybrid embeddings.
@@ -113,7 +117,7 @@ async def ingest_document(filepath: str, namespace : str = 'default') -> str:
         
         parser = LlamaParse(
             result_type="markdown",
-            verbose=True, 
+            verbose=False, 
             # Ensure your .env file has this exact variable name:
             api_key=os.getenv("LLAMA_CLOUD_API_KEY"), 
             system_prompt=parsing_instruction
@@ -158,28 +162,37 @@ async def ingest_document(filepath: str, namespace : str = 'default') -> str:
 
 
 @mcp.tool()
-async def query_vault(query: str, namespace: str = "default") -> str:
-    """
-    Searches the Semantic Vault vector database for information.
-    
-    """
+async def query_vault(query: str, namespace: str = "") -> str:
+    """Search the vector Database as per the user 's query."""
+
     try:
+        print(f"DEBUG: querying namespace='{namespace}'", file=sys.stderr)
+
+        # 1. Isolate ALL blocking network calls in a synchronous wrapper
+        def _execute_search():
+            index = get_pinecone_index()
+            
+            # Safe to do this here because we are off the main event loop
+            stats = index.describe_index_stats()
+            print(f"DEBUG: index stats: {stats}", file=sys.stderr)
+            
+            # Execute Hybrid Search
+            retriever = _get_retriever(namespace)
+            return retriever.invoke(query)
         
-        # Execute Hybrid Search
-        results = await asyncio.to_thread(
-          _get_retriever(namespace).invoke, query  
-        ) 
-        
+        # 2. Yield to the event loop while the thread handles the heavy lifting
+        results = await asyncio.to_thread(_execute_search)
+
+        print(f"DEBUG: results count: {len(results)}", file=sys.stderr)
+
         if not results:
             return "No relevant information found in the vault."
-            
+
         formatted_context = "\n\n--- CHUNK ---\n".join([doc.page_content for doc in results])
-        
         return f"Retrieved Context:\n{formatted_context}"
-        
+
     except Exception as e:
         return f"Retrieval Error: {str(e)}\n\n{traceback.format_exc()}"
-
 
 if __name__ == "__main__":
     mcp.run(transport='stdio')
