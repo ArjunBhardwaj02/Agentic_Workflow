@@ -57,27 +57,15 @@ if "user_thread_id" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state["messages"] = [AIMessage(content=welcome_text)]
 
-# Tracks whether a document was uploaded in THIS session
-# False by default — prevents agent searching stale vectors from old sessions
-
+# Tracks whether a document was ingested this session
+# Resets to False when user removes the file or starts fresh
 if "vault_active" not in st.session_state:
     st.session_state["vault_active"] = False
 
-# ==========================================
-# 2.5. USER NAMESPACE HELPER
-# ==========================================
-def get_user_namespace() -> str:
-    """
-    Returns a Pinecone namespace tied to the logged-in user's email.
-    - Logged-in users: stable namespace across sessions (user_name_domain_com)
-    - Guest users: session-scoped namespace (guest_{uuid})
-    - Sanitized to be Pinecone-safe (no @ or . characters)
-    """
-    is_logged_in = getattr(st.user, "is_logged_in", False)
-    if is_logged_in and getattr(st.user, "email", None):
-        safe_email = st.user.email.replace("@", "_").replace(".", "_")
-        return f"user_{safe_email}"
-    return st.session_state.get("user_thread_id", "guest_default")
+# Tracks the last ingested filename to detect new uploads
+# Reset to None so the same file can be re-uploaded in a new session
+if "last_processed_file" not in st.session_state:
+    st.session_state["last_processed_file"] = None
 
 # ==========================================
 # 3. THE GLOBAL EXECUTION ENGINE
@@ -186,7 +174,6 @@ with st.sidebar:
     is_logged_in = getattr(st.user, "is_logged_in", False)
 
     if not is_logged_in:
-        # Scopes are configured via client_kwargs in .streamlit/secrets.toml
         if st.button("🔗 Log in with Google"):
             st.login("google")
             st.stop()
@@ -197,7 +184,6 @@ with st.sidebar:
         if st.button("Disconnect"):
             st.logout()
 
-        # Re-bind thread_id to email now that we know it
         if getattr(st.user, "email", None):
             email_thread = f"user_{st.user.email}"
             if st.session_state.get("user_thread_id") != email_thread:
@@ -207,33 +193,44 @@ with st.sidebar:
 
     # KNOWLEDGE VAULT (AUTOMATED INGESTION)
     st.header("🗄️ Knowledge Vault")
-    uploaded_file = st.file_uploader("Stage Document", type=["pdf", "txt", "md"])
+
+    # Show currently active document if any
+    if st.session_state["vault_active"] and st.session_state["last_processed_file"]:
+        st.info(f"📄 Active: **{st.session_state['last_processed_file']}**")
+        if st.button("🗑️ Remove Document"):
+            st.session_state["vault_active"] = False
+            st.session_state["last_processed_file"] = None
+            st.rerun()
+
+    uploaded_file = st.file_uploader(
+        "Upload a new document (replaces current)",
+        type=["pdf", "txt", "md"],
+        # Use a dynamic key so the uploader resets after each successful ingest
+        # allowing the same file to be re-uploaded in a new session
+        key=f"uploader_{st.session_state.get('upload_count', 0)}"
+    )
 
     if uploaded_file is not None:
         if not os.environ.get("GOOGLE_API_KEY"):
             st.warning("⚠️ Enter your **Gemini API Key** above before uploading a document.")
         else:
-            file_id = str(uuid.uuid4())
-            safe_filename = f"{file_id}_{uploaded_file.name}"
-            staging_file_path = UPLOAD_DIR / safe_filename
+            # Trigger ingest if this is a different file than the last ingested one
+            if st.session_state["last_processed_file"] != uploaded_file.name:
+                file_id = str(uuid.uuid4())
+                safe_filename = f"{file_id}_{uploaded_file.name}"
+                staging_file_path = UPLOAD_DIR / safe_filename
 
-            if (
-                "last_processed_file" not in st.session_state
-                or st.session_state["last_processed_file"] != uploaded_file.name
-            ):
                 with open(staging_file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
 
                 st.success("✅ File securely staged!")
 
-                # Get the user's personal namespace — isolates their data in Pinecone
-                # and auto-deletes their previous document on new upload
-                user_namespace = get_user_namespace()
-
+                # Always use 'default' namespace — each user has their own
+                # Pinecone API key so no cross-user collision is possible
                 ingest_command = (
                     f"CRITICAL SYSTEM COMMAND: Execute the `ingest_document` tool. "
                     f"You MUST pass BOTH parameters exactly: "
-                    f"filepath='{staging_file_path}', namespace='{user_namespace}'. "
+                    f"filepath='{staging_file_path}', namespace='default'. "
                     f"Reply ONLY with the exact raw text returned by the tool. "
                     f"If the tool returns an error, output the exact error. "
                     f"Do not summarize or hallucinate."
@@ -242,20 +239,37 @@ with st.sidebar:
                 st.session_state["messages"].append(HumanMessage(content=ingest_command))
                 ai_message = asyncio.run(process_chat())
                 st.session_state["messages"].append(ai_message)
+
+                # Mark vault as active and record filename
+                st.session_state["vault_active"] = True
                 st.session_state["last_processed_file"] = uploaded_file.name
-                st.session_state["vault_active"] = True  
+
+                # Increment upload counter to reset the uploader widget
+                # This allows re-uploading the same filename again later
+                st.session_state["upload_count"] = st.session_state.get("upload_count", 0) + 1
+
                 st.rerun()
 
 # ==========================================
 # 6. RENDER CHAT HISTORY
 # ==========================================
 for msg in st.session_state["messages"]:
+    # Hide all backend system commands
     if "CRITICAL SYSTEM COMMAND:" in getattr(msg, "content", ""):
         continue
+
     if isinstance(msg, HumanMessage):
-        st.chat_message("user").write(msg.content)
+        # Strip the hidden [SYSTEM: ...] namespace hint before displaying
+        display_content = msg.content.split("\n\n[SYSTEM")[0].strip()
+        if display_content:
+            st.chat_message("user").write(display_content)
+
     elif isinstance(msg, AIMessage) and msg.content:
-        st.chat_message("assistant").write(msg.content)
+        # Hide ingest success/error responses — backend confirmations only
+        content = msg.content
+        if content.startswith("Success: Ingested") or content.startswith("Ingestion Error"):
+            continue
+        st.chat_message("assistant").write(content)
 
 # ==========================================
 # 7. USER CHAT TRIGGER
@@ -270,21 +284,21 @@ user_input = st.chat_input("Command your agents...", disabled=not is_chat_enable
 if user_input:
     st.chat_message("user").write(user_input)
 
-    # Inject namespace hint so agent always searches the correct user's vault
-    user_namespace = get_user_namespace()
-
+    # Inject vault instruction based on whether a document is active this session
     if st.session_state.get("vault_active"):
         augmented_input = (
             f"{user_input}\n\n"
-            f"[SYSTEM: If you need to search the knowledge vault, "
-            f"always use namespace='{user_namespace}']"
+            f"[SYSTEM INSTRUCTION — MANDATORY: The user has uploaded a document. "
+            f"You MUST call the `query_vault` tool with namespace='default' "
+            f"to answer any question about the uploaded document. "
+            f"Do NOT answer from memory. Call the tool first.]"
         )
     else:
         augmented_input = (
-        f"{user_input}\n\n"
+            f"{user_input}\n\n"
             f"[SYSTEM: No document has been uploaded this session. "
             f"Do NOT call query_vault — it will return stale data.]"
-    )
+        )
 
     st.session_state["messages"].append(HumanMessage(content=augmented_input))
     ai_message = asyncio.run(process_chat())
