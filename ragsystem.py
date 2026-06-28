@@ -166,7 +166,9 @@ async def query_vault(query: str, namespace: str = "__default__") -> str:
     try:
         
         # Execute Hybrid Search
-        results = await _get_retriever(namespace).ainvoke(query)
+        results = await asyncio.to_thread(
+          _get_retriever(namespace).invoke, query  
+        ) 
         
         if not results:
             return "No relevant information found in the vault."
