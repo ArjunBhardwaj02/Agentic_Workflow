@@ -89,7 +89,7 @@ def _get_retriever(namespace: str) -> PineconeHybridSearchRetriever:
 # MCP TOOLS
 
 @mcp.tool()
-async def ingest_document(filepath: str, namespace : str = '__default__') -> str:
+async def ingest_document(filepath: str, namespace : str = 'default') -> str:
     """
     Reads a local PDF or text file, extracts structured markdown, chunks it, 
     and saves it to the Semantic Vault vector database using Hybrid embeddings.
@@ -158,7 +158,7 @@ async def ingest_document(filepath: str, namespace : str = '__default__') -> str
 
 
 @mcp.tool()
-async def query_vault(query: str, namespace: str = "__default__") -> str:
+async def query_vault(query: str, namespace: str = "default") -> str:
     """
     Searches the Semantic Vault vector database for information.
     
